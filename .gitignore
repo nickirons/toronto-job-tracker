@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Database
+*.db
+
+# Debug/logs
+debug_*.txt
+debug_*.py
+backend/scripts/debug_*.py
+*.log
+
+# Environment
+.env
+.env.local
+
+# User settings
+settings.json
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build output
+dist/
+build/
