@@ -1,5 +1,6 @@
 """Main job fetcher orchestrator."""
 import asyncio
+import re
 from typing import List, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -16,6 +17,20 @@ from backend.services.jobspy_fetcher import JobSpyFetcher
 from backend.utils.filters import filter_internships
 from backend.utils.url_utils import normalize_url
 from backend.utils.url_resolver import resolve_jobs_urls
+
+
+def _dedup_key(title: str, company: str) -> str:
+    """
+    Create a normalized key from title + company for content-based deduplication.
+    This catches the same job posted across different sources (different URLs but
+    same title and company).
+    """
+    # Lowercase, strip whitespace, remove punctuation, collapse spaces
+    t = re.sub(r'[^a-z0-9\s]', '', title.lower().strip())
+    c = re.sub(r'[^a-z0-9\s]', '', company.lower().strip())
+    t = re.sub(r'\s+', ' ', t)
+    c = re.sub(r'\s+', ' ', c)
+    return f"{t}||{c}"
 
 
 class JobFetcher:
@@ -89,16 +104,26 @@ class JobFetcher:
         print("-" * 60)
         print(f"   TOTAL BEFORE DEDUP: {len(all_jobs)} jobs")
 
-        # Deduplicate by URL
+        # Deduplicate by URL and by title+company (catches same job across sources)
         seen_urls = set()
+        seen_content = set()
         unique_jobs: List[JobData] = []
+        content_dupes = 0
         for job in all_jobs:
             normalized = normalize_url(job.url)
-            if normalized not in seen_urls:
-                seen_urls.add(normalized)
-                unique_jobs.append(job)
+            content_key = _dedup_key(job.title, job.company)
+            if normalized in seen_urls:
+                continue
+            if content_key in seen_content:
+                content_dupes += 1
+                continue
+            seen_urls.add(normalized)
+            seen_content.add(content_key)
+            unique_jobs.append(job)
 
         print(f"   TOTAL AFTER DEDUP: {len(unique_jobs)} jobs")
+        if content_dupes > 0:
+            print(f"   (removed {content_dupes} cross-source duplicates by title+company)")
 
         # Filter for internships
         internship_jobs = filter_internships(unique_jobs)
@@ -185,21 +210,23 @@ class JobFetcher:
 
     def _save_jobs(self, db: Session, jobs: List[JobData]) -> int:
         """
-        Save jobs to database, skipping duplicates.
+        Save jobs to database, skipping duplicates by URL and by title+company.
 
         Returns:
             Number of new jobs added
         """
-        # Get existing URLs
-        existing_jobs = db.query(Job.url).all()
+        # Get existing URLs and title+company keys
+        existing_jobs = db.query(Job.url, Job.title, Job.company).all()
         existing_urls = set(normalize_url(j.url) for j in existing_jobs)
+        existing_content = set(_dedup_key(j.title, j.company) for j in existing_jobs)
 
         new_count = 0
         for job_data in jobs:
             normalized_url = normalize_url(job_data.url)
+            content_key = _dedup_key(job_data.title, job_data.company)
 
-            # Skip if already exists
-            if normalized_url in existing_urls:
+            # Skip if URL or title+company already exists
+            if normalized_url in existing_urls or content_key in existing_content:
                 continue
 
             # Create new job
@@ -218,6 +245,7 @@ class JobFetcher:
             )
             db.add(job)
             existing_urls.add(normalized_url)
+            existing_content.add(content_key)
             new_count += 1
 
         if new_count > 0:

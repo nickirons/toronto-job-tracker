@@ -1,4 +1,5 @@
 """Jobs API routes."""
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta
 
 from backend.database import get_db
 from backend.models.job import Job, JobUpdate, JobResponse
-from backend.services.job_fetcher import job_fetcher
+from backend.services.job_fetcher import job_fetcher, _dedup_key
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -153,6 +154,43 @@ async def clear_all_jobs(db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": f"Deleted {count} jobs"}
+
+
+@router.post("/deduplicate")
+async def deduplicate_jobs(db: Session = Depends(get_db)):
+    """Remove duplicate jobs from the database by matching title+company.
+    Keeps the oldest entry (first added) and removes newer duplicates.
+    Saved jobs are always kept over unsaved ones."""
+    all_jobs = db.query(Job).order_by(Job.added_at.asc()).all()
+
+    seen = {}  # dedup_key -> job to keep
+    to_delete = []
+
+    for job in all_jobs:
+        key = _dedup_key(job.title, job.company)
+        if key not in seen:
+            seen[key] = job
+        else:
+            existing = seen[key]
+            # Prefer keeping saved jobs
+            if job.is_saved and not existing.is_saved:
+                to_delete.append(existing.id)
+                seen[key] = job
+            elif job.status in ("applied", "reviewed") and existing.status == "new":
+                to_delete.append(existing.id)
+                seen[key] = job
+            else:
+                to_delete.append(job.id)
+
+    if to_delete:
+        db.query(Job).filter(Job.id.in_(to_delete)).delete(synchronize_session=False)
+        db.commit()
+
+    return {
+        "message": f"Removed {len(to_delete)} duplicate jobs",
+        "duplicates_removed": len(to_delete),
+        "jobs_remaining": len(all_jobs) - len(to_delete),
+    }
 
 
 @router.post("/resolve-urls")
