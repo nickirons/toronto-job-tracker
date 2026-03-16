@@ -16,7 +16,8 @@ A web application that aggregates internship/co-op job listings in Toronto from 
 ### 1. Install Backend Dependencies
 
 ```bash
-cd /Users/nicholasirons/Python.py/Personal/Claude/toronto-job-tracker
+git clone https://github.com/nickirons/toronto-job-tracker.git
+cd toronto-job-tracker
 
 # Create virtual environment (optional but recommended)
 python3 -m venv venv
@@ -37,14 +38,13 @@ npm install
 
 ```bash
 # From the project root
-cd /Users/nicholasirons/Python.py/Personal/Claude/toronto-job-tracker
 python -m uvicorn backend.main:app --reload --port 8000
 ```
 
 ### 4. Start the Frontend (in a new terminal)
 
 ```bash
-cd /Users/nicholasirons/Python.py/Personal/Claude/toronto-job-tracker/frontend
+cd frontend
 npm run dev
 ```
 
